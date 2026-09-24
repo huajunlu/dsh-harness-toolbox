@@ -1,0 +1,17 @@
+# 白名单式忽略：只允许源码与文档入库，一切本地数据/令牌/构建产物默认排除
+node_modules/
+*.log
+
+# 绝不允许入库：本地会话数据、启动器令牌、凭据、台账
+.dsh/
+.dsh-*/
+state.txt
+code.txt
+*.token
+credentials*
+.env
+.env.*
+
+# 打包产物
+dist/
+*.tgz

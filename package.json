@@ -1,0 +1,60 @@
+{
+  "name": "dsh-harness-toolbox",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 工具箱（非官方社区插件）：版本检查与一键升级、API 实时用量、环境体检、服务工具，模块化可持续扩展。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.1.5-rc.1"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer"
+      ],
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "toolbox",
+    "updater",
+    "usage"
+  ],
+  "license": "MIT",
+  "author": "LHJ",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lhj-dev/dsh-harness-toolbox.git"
+  },
+  "homepage": "https://github.com/lhj-dev/dsh-harness-toolbox#readme"
+}

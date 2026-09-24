@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DeepSeek Harness 工具箱 · 使用指南</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px; height: 1750px; overflow: hidden;
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    color: #e8ecf4;
+    background:
+      radial-gradient(1100px 500px at 85% -8%, rgba(56,120,255,.28), transparent 60%),
+      radial-gradient(900px 600px at -10% 30%, rgba(20,180,160,.14), transparent 55%),
+      linear-gradient(165deg, #0a0d14 0%, #0d1220 48%, #0a0e18 100%);
+    position: relative;
+  }
+  .wrap { padding: 64px 72px; position: relative; z-index: 2; }
+
+  /* ── 头部 ── */
+  .hero { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; }
+  .kicker { font-size: 15px; letter-spacing: 6px; color: #5b8cff; font-weight: 600; margin-bottom: 14px; }
+  h1 { font-size: 58px; font-weight: 800; line-height: 1.15; letter-spacing: 1px; }
+  h1 .grad { background: linear-gradient(92deg, #6ea8ff 5%, #43e0c8 95%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { margin-top: 14px; font-size: 17px; color: #93a0b8; line-height: 1.7; }
+  .by { text-align: right; font-size: 14px; color: #6b7893; line-height: 2; white-space: nowrap; }
+  .by b { color: #cbd4e6; font-weight: 600; }
+  .ver { display: inline-block; padding: 3px 12px; border: 1px solid rgba(91,140,255,.5); border-radius: 99px; color: #8fb4ff; font-size: 13px; margin-top: 4px; }
+  .divider { height: 1px; background: linear-gradient(90deg, rgba(91,140,255,.55), rgba(255,255,255,.06) 60%, transparent); margin: 26px 0 34px; }
+
+  /* ── 入口路径 ── */
+  .entry {
+    display: flex; align-items: center; gap: 18px; justify-content: center;
+    background: linear-gradient(90deg, rgba(56,120,255,.14), rgba(67,224,200,.08));
+    border: 1px solid rgba(91,140,255,.35); border-radius: 18px;
+    padding: 22px 28px; margin-bottom: 40px;
+  }
+  .entry .step {
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px; padding: 10px 20px; font-size: 19px; font-weight: 600;
+  }
+  .entry .arrow { color: #5b8cff; font-size: 24px; font-weight: 700; }
+  .entry .hint { font-size: 14px; color: #8fa0bd; margin-left: 8px; }
+
+  /* ── 区块标题 ── */
+  .sec { display: flex; align-items: center; gap: 14px; margin: 38px 0 20px; }
+  .sec .no {
+    width: 34px; height: 34px; border-radius: 10px; flex: none;
+    background: linear-gradient(135deg, #3878ff, #43e0c8); color: #06101f;
+    font-weight: 800; font-size: 16px; display: flex; align-items: center; justify-content: center;
+  }
+  .sec h2 { font-size: 26px; font-weight: 700; letter-spacing: 1px; }
+  .sec .line { flex: 1; height: 1px; background: rgba(255,255,255,.09); }
+
+  /* ── 五功能卡 ── */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .card {
+    background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 18px; padding: 22px 24px; position: relative; overflow: hidden;
+  }
+  .card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent, #3878ff); opacity: .85; }
+  .card .head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .card .ico { font-size: 24px; }
+  .card h3 { font-size: 21px; font-weight: 700; }
+  .card p { font-size: 14.5px; line-height: 1.85; color: #a8b4cc; }
+  .card p b { color: #dde5f4; font-weight: 600; }
+  .tag { display: inline-block; font-size: 12px; padding: 2px 10px; border-radius: 99px; margin-top: 10px; margin-right: 6px; }
+  .tag.g { background: rgba(52,199,120,.15); color: #4ade80; border: 1px solid rgba(52,199,120,.35); }
+  .tag.b { background: rgba(56,120,255,.15); color: #8fb4ff; border: 1px solid rgba(56,120,255,.35); }
+  .card.wide { grid-column: 1 / -1; }
+
+  /* ── 升级流程 ── */
+  .flow { display: flex; flex-wrap: wrap; gap: 10px 6px; align-items: center; }
+  .fstep {
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px; padding: 12px 15px; font-size: 15px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .fstep .n { color: #5b8cff; font-size: 13px; font-weight: 800; }
+  .fstep.ok { border-color: rgba(74,222,128,.4); }
+  .fstep.ok .n { color: #4ade80; }
+  .fstep.rb { border-color: rgba(255,160,80,.45); background: rgba(255,160,80,.08); }
+  .fstep.rb .n { color: #ffa050; }
+  .farrow { color: #4a5878; font-size: 15px; padding: 0 1px; }
+  .fbranch { width: 100%; padding-left: 4px; font-size: 13.5px; color: #ffa050; display: flex; align-items: center; gap: 8px; }
+  .fbranch .down { color: #4a5878; }
+  .flow-note { margin-top: 14px; font-size: 14px; color: #8fa0bd; line-height: 1.8; }
+  .flow-note b { color: #4ade80; }
+
+  /* ── 安全徽章 ── */
+  .shields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .shield {
+    background: rgba(67,224,200,.06); border: 1px solid rgba(67,224,200,.28);
+    border-radius: 14px; padding: 16px 18px;
+  }
+  .shield .t { font-size: 16px; font-weight: 700; color: #43e0c8; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .shield .d { font-size: 13px; color: #96a4bd; line-height: 1.7; }
+
+  /* ── 扩展提示 ── */
+  .ext {
+    margin-top: 38px; background: rgba(255,255,255,.04);
+    border: 1px dashed rgba(255,255,255,.22); border-radius: 18px;
+    padding: 24px 28px; display: flex; gap: 26px; align-items: center;
+  }
+  .ext .big { font-size: 40px; }
+  .ext h3 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  .ext p { font-size: 14.5px; color: #a8b4cc; line-height: 1.8; }
+  .ext code { font-family: Consolas, monospace; background: rgba(56,120,255,.16); color: #8fb4ff; padding: 1px 8px; border-radius: 6px; font-size: 13.5px; }
+
+  /* ── 底部 ── */
+  .foot {
+    margin-top: 40px; padding-top: 22px; border-top: 1px solid rgba(255,255,255,.09);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13.5px; color: #6b7893;
+  }
+  .foot .warn { color: #8fa0bd; }
+  .foot b { color: #93a0b8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hero">
+    <div>
+      <div class="kicker">DeepSeek Harness · 非官方社区插件</div>
+      <h1>DeepSeek <span class="grad">Harness 工具箱</span></h1>
+      <div class="sub">设置面板里的五合一中心：升级 · 用量 · 体检 · 服务 · 关于</div>
+    </div>
+    <div class="by">
+      <b>by LHJ</b><br>
+      <span class="ver">v0.1.0 · MIT</span>
+    </div>
+  </div>
+  <div class="divider"></div>
+
+  <!-- 入口 -->
+  <div class="entry">
+    <span class="step">⚙️ 设置</span>
+    <span class="arrow">→</span>
+    <span class="step">🧰 Harness 工具箱</span>
+    <span class="arrow">→</span>
+    <span class="step">五个页签</span>
+    <span class="hint">侧边栏底部齿轮进入</span>
+  </div>
+
+  <!-- 五功能 -->
+  <div class="sec"><div class="no">1</div><h2>五大功能页签</h2><div class="line"></div></div>
+  <div class="grid">
+    <div class="card" style="--accent:#3878ff">
+      <div class="head"><span class="ico">🔼</span><h3>更新中心</h3></div>
+      <p>自动校验 <b>npm 最新版本</b>，支持 <b>latest / next / alpha</b> 三通道切换；发现新版本时页签亮起红点。点「立即升级」二次确认后全自动完成，你只需要等它回来。</p>
+      <span class="tag b">三通道</span><span class="tag g">失败自动回滚</span><span class="tag b">升级历史</span>
+    </div>
+    <div class="card" style="--accent:#43e0c8">
+      <div class="head"><span class="ico">📊</span><h3>API 用量</h3></div>
+      <p>今日 <b>token 四桶</b>（输入/输出/缓存读写）与调用次数，<b>近 30 天趋势图</b>、分模型明细、账户余额与消费估算——数据实时聚合，打开即见。</p>
+      <span class="tag g">实时</span><span class="tag b">30 天趋势</span><span class="tag b">余额</span>
+    </div>
+    <div class="card" style="--accent:#a78bfa">
+      <div class="head"><span class="ico">🩺</span><h3>环境体检</h3></div>
+      <p>Node / 系统 / 安装模式 / 目录路径 / 端口 / <b>registry 连通延迟</b> / 代理变量，一键复制整段诊断——排障发给别人，<b>不含任何密钥</b>。</p>
+      <span class="tag b">一键复制</span><span class="tag g">零密钥</span>
+    </div>
+    <div class="card" style="--accent:#ffa050">
+      <div class="head"><span class="ico">🛠</span><h3>服务工具</h3></div>
+      <p>打开<b>服务日志 / 运行时目录 / 配置目录</b>一键直达；<b>重启服务</b>带二次确认与健康检查，页面短暂断开后自动恢复。</p>
+      <span class="tag b">一键直达</span><span class="tag g">健康检查</span>
+    </div>
+    <div class="card wide" style="--accent:#6b7893">
+      <div class="head"><span class="ico">ℹ️</span><h3>关于</h3></div>
+      <p>版本号 · 署名 <b>LHJ</b> · 许可证 · 模块清单 · 仓库与安全政策入口，以及醒目的<b>非官方社区插件</b>声明。</p>
+    </div>
+  </div>
+
+  <!-- 升级流程 -->
+  <div class="sec"><div class="no">2</div><h2>一键升级背后发生了什么</h2><div class="line"></div></div>
+  <div class="flow">
+    <div class="fstep"><span class="n">01</span>校验版本</div><span class="farrow">→</span>
+    <div class="fstep"><span class="n">02</span>二次确认</div><span class="farrow">→</span>
+    <div class="fstep"><span class="n">03</span>停止服务</div><span class="farrow">→</span>
+    <div class="fstep"><span class="n">04</span>备份清单</div><span class="farrow">→</span>
+    <div class="fstep"><span class="n">05</span>安装新版本</div><span class="farrow">→</span>
+    <div class="fstep"><span class="n">06</span>重启服务</div><span class="farrow">→</span>
+    <div class="fstep ok"><span class="n">07</span>健康检查 ✓</div>
+    <div class="fbranch"><span class="down">└─ 任一步失败 ↓</span></div>
+    <div class="fstep rb"><span class="n">↺</span>自动回滚旧版本</div><span class="farrow">→</span>
+    <div class="fstep rb">恢复服务 · 写入手动恢复手册</div>
+  </div>
+  <div class="flow-note">
+    全程由<b>分离进程执行器</b>驱动——宿主被停掉它也活着；停服用 <b>taskkill /F /T</b> 确认端口释放才继续（绝不原地安装）；回滚按备份 lock 逐字节恢复。
+  </div>
+
+  <!-- 安全 -->
+  <div class="sec"><div class="no">3</div><h2>六层安全围栏</h2><div class="line"></div></div>
+  <div class="shields">
+    <div class="shield"><div class="t">🔒 回环围栏</div><div class="d">全部 API 仅接受本机请求，跨站标记与异源 Origin 直接拒绝</div></div>
+    <div class="shield"><div class="t">🎫 一次性 nonce</div><div class="d">升级/重启需 10 分钟时效一次性凭据，用后即废，CSRF 无从谈起</div></div>
+    <div class="shield"><div class="t">🚫 零 shell 拼接</div><div class="d">固定包名 + 版本白名单正则，命令不经 shell，注入无门</div></div>
+    <div class="shield"><div class="t">📦 升级前备份</div><div class="d">package.json 与 lock 先备份，失败自动恢复并重建依赖树</div></div>
+    <div class="shield"><div class="t">🕵️ 零密钥</div><div class="d">不读凭据文件，代理变量只报存在性，诊断复制不含令牌</div></div>
+    <div class="shield"><div class="t">🧱 模块隔离</div><div class="d">单模块故障只降级自身，设置页永不白屏</div></div>
+  </div>
+
+  <!-- 扩展 -->
+  <div class="ext">
+    <div class="big">🧩</div>
+    <div>
+      <h3>可持续扩展：加一个功能只需两步</h3>
+      <p>宿主 <code>lib/modules/ 新文件</code> + 注册表一行；页签 <code>TABS</code> 数组一行 —— 模块化注册表架构，互不耦合、独立隔离。</p>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="warn">⚠️ 非官方社区插件，与 DeepSeek 官方无关 · 升级会中断进行中的会话</span>
+    <span><b>github.com/lhj-dev/dsh-harness-toolbox</b> · MIT © LHJ 2026</span>
+  </div>
+
+</div>
+</body>
+</html>

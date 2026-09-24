@@ -1,0 +1,8 @@
+# dsh-harness-toolbox bundle patch：把工具箱插件行插入 web 插件名单。
+# 一行同时挂载两半：宿主半（版本校验 / 升级执行 / 用量聚合 / 诊断路由，
+# 全部 /api/dsh-toolbox/* 回环围栏路由）与浏览器半（服务端扫描本包
+# dsh.client 声明，从 lib/client.js 提供设置面板「Harness 工具箱」分区）。
+- insert:
+    - id: harness-toolbox
+      name: dsh-harness-toolbox
+      config: {}
