@@ -21,17 +21,36 @@
  *    代码，假阳性）；/about 的 plugin.name 是按目录名（package.json name）
  *    推导的精确 buildId，probe 校验它才算真正接管。
  *
- * 用法：node scripts/deploy.mjs [--no-probe]
+ * 4. **原子落地 + 落地前自检 + 失败回滚**（2026-09-25 事故后补强）：
+ *    原先直接 `rmSync + cpSync` 原地重写活动目录，宿主文件监视可能在半写状态
+ *    触发 import → 重组失败 → 运行实例路由被清空（工具箱在 GUI 中全部 401）。
+ *    现在：先构建到临时目录 → 静态自检（清单/入口/API 前缀/`node --check`）
+ *    → 旧目录改名备份、新目录改名就位（窗口极短）→ 探针确认活实例接管
+ *    → **只有确认接管后才重建转发壳**；探针失败则把补丁回滚到部署前内容，
+ *    避免 profile 指向一个不服务的名字。
+ *
+ * 5. **冷启动兜底**：本机 0.1.7 宿主上补丁热重组不可靠（改 patch 不一定
+ *    re-import）。`--restart` 会在探针失败时经 WMI 树外启动
+ *    `scripts/restart-host.mjs`，延迟冷启动宿主（宿主重启会掐断当前会话，
+ *    所以默认延迟 180s，先把控制权交回用户）。
+ *
+ * 用法：node scripts/deploy.mjs [--no-probe] [--as <name>] [--restart]
  *   环境：DSH_HOME（默认 ~/.dsh），profile 默认 web，端口读启动器 state.txt。
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const BASE = 'dsh-harness-toolbox'
 const args = process.argv.slice(2)
 const doProbe = !args.includes('--no-probe')
+// --as <name>：显式指定活名（不递增）。用于「回退」——当宿主上的 HMR 重组
+// 未生效时，运行实例仍是旧名，此时必须把补丁与全部转发壳对齐到**运行中的
+// 那个名字**，磁盘与内存才能一致（否则壳的 API 前缀指向不存在的新前缀 → 401）。
+const asIndex = args.indexOf('--as')
+const explicitName = asIndex >= 0 ? (args[asIndex + 1] ?? null) : null
 
 const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
 const profileDir = process.env.DSH_PROFILE_DIR || path.join(dshHome, 'profiles', 'web')
@@ -52,8 +71,8 @@ function nextName() {
   return `${BASE}-dev${max + 1}`
 }
 
-/** 复制源码 + 把 client.js 的 id/NS/API 全部对齐到指定包名。 */
-function materialize(dir, packageId) {
+/** 在指定目录构建一份包内容（不触碰目标目录，供原子替换使用）。 */
+function buildInto(dir, packageId) {
   fs.rmSync(dir, { recursive: true, force: true })
   fs.mkdirSync(dir, { recursive: true })
   for (const item of ['lib', 'scripts', 'cordis.patch.yml', 'LICENSE', 'README.md', 'SECURITY.md']) {
@@ -71,10 +90,89 @@ function materialize(dir, packageId) {
   fs.writeFileSync(clientPath, client)
 }
 
-/** 活实例：最新代码 + 最新包名。 */
-function stageLive(dir, liveName) {
-  materialize(dir, liveName)
-  log(`staged live -> ${dir}`)
+/**
+ * 落地前自检——把半成品挡在 swap 之前（事故教训：半写目录一旦被宿主 import
+ * 就会清空运行实例的路由）。校验清单名、必需入口、client API 前缀与 id/NS，
+ * 并对关键文件跑 `node --check` 语法自检。
+ * @returns {string[]} 问题列表（空数组 = 通过）
+ *
+ * 注意：本机沙箱会拒掉带管道 stdio 的子进程（spawn EPERM），所以语法检查把
+ * stderr 重定向到临时文件再读回来，而不是用 encoding/pipe 捕获。
+ */
+function validateBuild(dir, packageId, expectIds) {
+  const problems = []
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
+    if (manifest.name !== packageId) problems.push(`package.json name=${manifest.name} ≠ ${packageId}`)
+  } catch (error) {
+    problems.push(`package.json 不可解析：${error.message}`)
+  }
+  for (const rel of ['lib/index.js', 'lib/client.js', 'lib/registry.js', 'cordis.patch.yml']) {
+    if (!fs.existsSync(path.join(dir, rel))) problems.push(`缺少 ${rel}`)
+  }
+  const clientPath = path.join(dir, 'lib', 'client.js')
+  if (fs.existsSync(clientPath)) {
+    const client = fs.readFileSync(clientPath, 'utf8')
+    const api = (client.match(/const API = "([^"]+)"/) || [])[1]
+    if (api !== `/api/${packageId}`) problems.push(`client API=${api} ≠ /api/${packageId}`)
+    if (expectIds) {
+      const id = (client.match(/id: "([^"]+)"/) || [])[1]
+      if (id !== expectIds.id) problems.push(`client id=${id} ≠ ${expectIds.id}`)
+      const ns = (client.match(/const NS = "([^"]+)"/) || [])[1]
+      if (ns !== expectIds.ns) problems.push(`client NS=${ns} ≠ ${expectIds.ns}`)
+    }
+  }
+  const files = ['lib/index.js', 'lib/client.js', 'lib/wmi.js', 'lib/registry.js', 'scripts/upgrade.mjs', 'scripts/restart-host.mjs']
+  for (const rel of files) {
+    const target = path.join(dir, rel)
+    if (!fs.existsSync(target)) continue
+    const errFile = path.join(os.tmpdir(), `dsh-deploy-check-${process.pid}-${problems.length}.log`)
+    let fd = null
+    try {
+      fd = fs.openSync(errFile, 'w')
+      const r = spawnSync(process.execPath, ['--check', target], { stdio: ['ignore', 'ignore', fd], windowsHide: true })
+      fs.closeSync(fd)
+      fd = null
+      if (r.status !== 0) {
+        const detail = (() => { try { return fs.readFileSync(errFile, 'utf8').slice(0, 300) } catch { return '' } })()
+        problems.push(`${rel} 语法检查未通过（exit=${r.status}）${detail ? '\n' + detail : ''}`)
+      }
+    } catch (error) {
+      problems.push(`${rel} 语法检查无法执行：${error.message}`)
+    } finally {
+      if (fd !== null) { try { fs.closeSync(fd) } catch { /* 已关闭 */ } }
+      try { fs.rmSync(errFile, { force: true }) } catch { /* 临时文件清理失败无妨 */ }
+    }
+  }
+  return problems
+}
+
+/** 原子替换目录：旧目录先改名备份，新目录改名就位（缺失窗口只有两次 rename）。 */
+function swapDir(stageDir, targetDir) {
+  const prevDir = path.join(nmDir, `.prev-${path.basename(targetDir)}-${process.pid}`)
+  fs.rmSync(prevDir, { recursive: true, force: true })
+  if (fs.existsSync(targetDir)) fs.renameSync(targetDir, prevDir)
+  try {
+    fs.renameSync(stageDir, targetDir)
+  } catch (error) {
+    fs.rmSync(targetDir, { recursive: true, force: true })
+    if (fs.existsSync(prevDir)) fs.renameSync(prevDir, targetDir) // 就地回滚
+    throw error
+  }
+  fs.rmSync(prevDir, { recursive: true, force: true })
+}
+
+/** 活实例：原子落地 + 自检（最新代码 + 最新包名）。 */
+function buildLive(targetDir, liveName) {
+  const stageDir = path.join(nmDir, `.stage-${liveName}-${process.pid}`)
+  buildInto(stageDir, liveName)
+  const problems = validateBuild(stageDir, liveName, { id: liveName, ns: liveName })
+  if (problems.length > 0) {
+    fs.rmSync(stageDir, { recursive: true, force: true })
+    fail(`构建自检未通过（暂存目录已清理，profile 未改动）：\n  - ${problems.join('\n  - ')}`)
+  }
+  swapDir(stageDir, targetDir)
+  log(`staged live -> ${targetDir}（原子替换 + 自检通过）`)
 }
 
 /**
@@ -82,13 +180,20 @@ function stageLive(dir, liveName) {
  * factory id/NS=历史名（匹配启动图装载键），API 前缀=活前缀（请求打活路由）。
  */
 function healShell(dir, histName, liveName) {
-  materialize(dir, liveName) // 先整体对齐活名（含 API 前缀）
-  const clientPath = path.join(dir, 'lib', 'client.js')
+  const stageDir = path.join(nmDir, `.stage-shell-${histName}-${process.pid}`)
+  buildInto(stageDir, liveName) // 先整体对齐活名（含 API 前缀）
+  const clientPath = path.join(stageDir, 'lib', 'client.js')
   let client = fs.readFileSync(clientPath, 'utf8')
   // 把 id 与 NS 改回历史名；API 前缀保持活名不动。
   client = client.replace(`id: "${liveName}"`, `id: "${histName}"`)
   client = client.replace(`const NS = "${liveName}"`, `const NS = "${histName}"`)
   fs.writeFileSync(clientPath, client)
+  const problems = validateBuild(stageDir, liveName, { id: histName, ns: histName })
+  if (problems.length > 0) {
+    fs.rmSync(stageDir, { recursive: true, force: true })
+    fail(`转发壳自检未通过（${histName}，暂存目录已清理）：\n  - ${problems.join('\n  - ')}`)
+  }
+  swapDir(stageDir, dir)
   log(`healed shell <- ${histName} (forwards to ${liveName})`)
 }
 
@@ -197,20 +302,100 @@ async function probe(port, expectedName) {
   return false
 }
 
-const name = nextName()
-log(`deploying as ${name}`)
+/** 单次探针：活实例是否在指定前缀服务（用于失败回滚时确认旧实例仍在）。 */
+async function probeOnce(port, expectedName) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/${expectedName}/about`, { signal: AbortSignal.timeout(3000) })
+    const body = await res.json()
+    return body?.plugin?.name === expectedName
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 经 WMI 树外启动 `scripts/restart-host.mjs`（延迟冷启动宿主）。
+ * 为什么树外：本机父子进程共生，宿主退出会连坐清掉普通子进程；WMI 创建的
+ * 进程父为 WmiPrvSE，宿主重启后它照常把新宿主拉起来。默认延迟 180s，先把
+ * 控制权交回用户（宿主重启会掐断正在进行的会话）。
+ */
+function scheduleColdRestart(delaySec = 180) {
+  const helper = path.join(sourceDir, 'scripts', 'restart-host.mjs')
+  if (!fs.existsSync(helper)) {
+    console.error('[deploy] 未找到 scripts/restart-host.mjs，无法安排冷启动')
+    return false
+  }
+  if (helper.includes("'")) {
+    console.error('[deploy] 路径含单引号，无法经 PowerShell 字面量传递')
+    return false
+  }
+  const command = `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='node "${helper}" --delay ${delaySec}'} | ForEach-Object { "$($_.ReturnValue) $($_.ProcessId)" }`
+  // 沙箱会拒掉管道 stdio 的子进程 → 同样把输出重定向到临时文件再读。
+  const outFile = path.join(os.tmpdir(), `dsh-deploy-wmi-${process.pid}.log`)
+  let fd = null
+  let stdout = ''
+  try {
+    fd = fs.openSync(outFile, 'w')
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+      stdio: ['ignore', fd, fd], windowsHide: true, timeout: 30_000,
+    })
+    fs.closeSync(fd)
+    fd = null
+    stdout = (() => { try { return fs.readFileSync(outFile, 'utf8') } catch { return '' } })()
+    const m = stdout.match(/(\d+)\s+(\d+)/)
+    if (r.status === 0 && m && m[1] === '0') {
+      log(`已安排 ${delaySec}s 后冷启动宿主（树外助手 pid=${m[2]}）`)
+      return true
+    }
+    console.error('[deploy] 冷启动助手启动失败：', stdout.trim() || `exit=${r.status}`)
+  } catch (error) {
+    console.error('[deploy] 冷启动助手异常：', error.message)
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd) } catch { /* 已关闭 */ } }
+    try { fs.rmSync(outFile, { force: true }) } catch { /* 清理失败无妨 */ }
+  }
+  return false
+}
+
+const name = explicitName || nextName()
+if (explicitName && !/^dsh-harness-toolbox(-dev\d+)?$/.test(explicitName)) {
+  fail(`--as 名称非法：${explicitName}（须为 dsh-harness-toolbox 或 dsh-harness-toolbox-devN）`)
+}
+log(explicitName ? `rolling back to explicit live name ${name}` : `deploying as ${name}`)
+
+// 部署前的补丁快照：探针失败时原样回滚，绝不把 profile 留在
+// 「指向一个不服务的名字」的状态（2026-09-25 事故的直接教训）。
+const prevPatch = fs.readFileSync(patchFile, 'utf8')
+const prevLive = (prevPatch.match(/- id: harness-toolbox\s*[\r\n]+\s*name:\s*(\S+)/) || [])[1] || null
+
 // 先记录（把已知历史 dev3-dev8 都 seed 进去也无妨——缺目录才补），
-// 再落活包、改 patch、补壳。
+// 再原子落活包、改 patch；壳留到探针确认接管之后再补。
 recordDeployed(name)
-stageLive(path.join(nmDir, name), name)
+buildLive(path.join(nmDir, name), name)
 rewritePatch(name)
-healAllExcept(name)
-healMissingFromHistory(name)
+
 if (doProbe) {
-  const ok = await probe(servicePort(), name)
+  const port = servicePort()
+  const ok = await probe(port, name)
   if (!ok) {
-    console.error('[deploy] WARN: 60s 内新实例未接管——检查 loader 日志；旧实例仍在服务（安全降级，但代码未更新）。')
+    fs.writeFileSync(patchFile, prevPatch)
+    log('探针未通过 → 补丁已回滚到部署前状态')
+    if (prevLive) {
+      const alive = await probeOnce(port, prevLive)
+      log(alive
+        ? `上一个实例 ${prevLive} 仍在服务 —— 界面不受影响，可稍后重试`
+        : `上一个实例 ${prevLive} 已不在服务 —— 需要冷启动宿主才能恢复（旧壳仍指向 ${prevLive}，冷启动后自洽）`)
+    }
+    if (args.includes('--restart')) {
+      scheduleColdRestart()
+    } else {
+      console.error('[deploy] 本机宿主可能不会热应用补丁；加 --restart 可自动安排树外冷启动。')
+    }
     process.exit(2)
   }
 }
+
+// 确认活实例接管后才重建转发壳（否则壳会指向死前缀，浏览器全 401）。
+healAllExcept(name)
+healMissingFromHistory(name)
 log('DONE')

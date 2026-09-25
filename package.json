@@ -1,6 +1,6 @@
 {
   "name": "dsh-harness-toolbox",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DeepSeek Harness 工具箱（非官方社区插件）：版本检查与一键升级、API 实时用量、环境体检、服务工具，模块化可持续扩展。",
   "type": "module",
   "main": "lib/index.js",
@@ -54,7 +54,7 @@
   "author": "LHJ",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lhj-dev/dsh-harness-toolbox.git"
+    "url": "https://github.com/huajunlu/dsh-harness-toolbox.git"
   },
-  "homepage": "https://github.com/lhj-dev/dsh-harness-toolbox#readme"
+  "homepage": "https://github.com/huajunlu/dsh-harness-toolbox#readme"
 }
