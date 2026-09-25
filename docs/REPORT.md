@@ -146,7 +146,7 @@ socket 回环（XFF 永不信）→ Host 回环 → `sec-fetch-site` 拒跨站 �
 | 交付物 | 位置 |
 | --- | --- |
 | 插件源码（开源仓库） | `<workspace>\dsh-harness-toolbox\` |
-| 在线实例 | 已挂载于设置面板 →「Harness 工具箱」（buildId `-dev9`） |
+| 在线实例 | 已挂载于设置面板 →「Harness 工具箱」（buildId `-dev10`，v0.1.1） |
 | 方案审核截图 | `shot\plan-mockup.png`（红框标注） |
 | 五页签验收截图 | `shot\ui\1-更新中心 … 5-关于.png` |
 | 使用方法创意信息图 | `usage-guide.png` |
