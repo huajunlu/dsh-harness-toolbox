@@ -20,6 +20,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { wmiCreate, wmiRunNode } from '../lib/wmi.js'
@@ -67,8 +68,59 @@ function portAlive() {
   })
 }
 
+/** 跑一条 PowerShell，输出重定向到临时文件再读回（沙箱会拒管道 stdio）。 */
+function psRun(command, timeoutMs = 20_000) {
+  const outFile = path.join(os.tmpdir(), `dsh-restart-ps-${process.pid}-${Math.random().toString(36).slice(2, 8)}.log`)
+  let fd = null
+  try {
+    fd = fs.openSync(outFile, 'w')
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+      stdio: ['ignore', fd, fd], windowsHide: true, timeout: timeoutMs,
+    })
+    try { fs.closeSync(fd) } catch { /* 已关闭 */ }
+    fd = null
+    const text = fs.readFileSync(outFile, 'utf8')
+    if (r.status !== 0) throw new Error(`powershell exit ${r.status}: ${text.trim().slice(0, 200)}`)
+    return text
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd) } catch { /* 已关闭 */ } }
+    try { fs.rmSync(outFile, { force: true }) } catch { /* 清理失败无妨 */ }
+  }
+}
+
+/** 当前监听 PORT 的进程启动时间（毫秒）；查不到返回 null。 */
+async function listenerStartedAt() {
+  try {
+    let pid = null
+    for (const line of psRun('netstat -ano').split(/\r?\n/)) {
+      if (!line.includes('LISTENING')) continue
+      const cols = line.trim().split(/\s+/)
+      if ((cols[1] ?? '').endsWith(`:${PORT}`) && /^\d+$/.test(cols.at(-1) ?? '')) { pid = Number(cols.at(-1)); break }
+    }
+    if (!pid) return null
+    const iso = psRun(`(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate.ToUniversalTime().ToString('o')`)
+    const t = Date.parse(iso.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? '')
+    return Number.isFinite(t) ? t : null
+  } catch {
+    return null
+  }
+}
+
+const armedAt = Date.now()
 log(`armed: cold restart in ${DELAY_SEC}s (port ${PORT}, runtime ${RUNTIME_DIR})`)
 await sleep(DELAY_SEC * 1000)
+
+// 守卫：若服务在本次安排**之后**已被别人重启（用户自己重启、宿主冷启动等），
+// 就不要动它——否则会在用户刚重启完立刻再杀一次宿主（2026-09-26 实测踩到：
+// 助手尚在休眠时用户已手动重启，醒来后本会重复重启）。查不到信息时按计划执行。
+const startedAt = await listenerStartedAt()
+if (startedAt !== null && startedAt > armedAt) {
+  log(`skip: 服务已在本次安排之后重启（监听进程启动于 ${new Date(startedAt).toISOString()}，安排于 ${new Date(armedAt).toISOString()}）——无需再重启`)
+  process.exit(0)
+}
+log(startedAt === null
+  ? 'warn: 无法确认监听进程启动时间，仍按计划执行冷启动'
+  : `listener started ${new Date(startedAt).toISOString()}（早于安排时间）→ 按计划执行冷启动`)
 
 const serviceLog = newestWebLog()
 log(`using service log: ${serviceLog}`)
