@@ -15,9 +15,21 @@
 | CSRF | 破坏性 POST 额外要求 `Content-Type: application/json`（跨站 HTML 表单无法发送）+ 进程内**一次性 nonce**（10 分钟过期，用后即废） |
 | 命令注入 | 升级执行器不经 shell：`execFile(process.execPath, [npm-cli.js, ...args])`；目标版本号过 `^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$` 白名单；包名固定为 `@deepseek-ai/dsh`；通道名过 `latest/next/alpha` 枚举 |
 | 供应链 | 升级前备份 `package.json` + `package-lock.json`；安装失败自动恢复清单并 `npm ci` 回滚；回滚失败写 `last-upgrade-error.txt` 提供手动恢复命令；版本检查走用户本机 `npm config`（尊重其镜像配置） |
-| 秘密泄露 | 不读取 `.credentials.yaml`、不读取任何令牌；代理环境变量只回传存在性与变量名，**不回传值**；诊断复制文本不含密钥；本仓库禁止提交 `.dsh` 数据目录、启动器 `state.txt`（含界面令牌） |
-| 第三方数据 | `$DSH_HOME/dsh-usage/*.json` 严格校验顶层 `version` 字段，schema 不符时安全忽略（`available:false`），不抛错、不半渲染 |
+| 秘密泄露 | **不读取 `.credentials.yaml`、不读取任何凭据文件、不读取环境变量**；余额查询所需的密钥仅通过官方 seam `ctx.credentials.resolve(...)` 解析（见下节）；代理环境变量只回传存在性与变量名，**不回传值**；诊断复制文本不含密钥；本仓库禁止提交 `.dsh` 数据目录、启动器 `state.txt`（含界面令牌） |
+| 第三方数据 | `$DSH_HOME/dsh-usage/*.json` 严格校验顶层 `version` 字段，schema 不符时安全忽略（`available:false`），不抛错、不半渲染；用量改为聚合 DSH 自身会话日志后，该文件仅作兜底 |
 | 客户端健壮性 | 每个页签包在独立错误边界里；单模块注册失败被 registry 隔离 |
+
+## 余额查询中的密钥使用（v0.1.5 起，明确备案）
+
+「API 用量」页在 DSH **未登录平台账号**时会回退到 API Key 直连官方余额接口。该路径的安全边界：
+
+1. **只走官方 seam**：`ctx.credentials.resolve('DEEPSEEK_API_KEY')`——不读取 `.credentials.yaml`、不读环境变量、不遍历文件系统；
+2. **只发一次固定请求**：`GET https://api.deepseek.com/user/balance`（URL 硬编码，不接受任何外部输入），超时 10s；
+3. **密钥不外泄**：不写入日志、不进入任何 HTTP 响应、不落盘、不缓存明文（缓存只存映射后的余额数字）；失败时只回报 HTTP 状态码，**不回传响应正文**（正文可能回显凭据线索）；
+4. **可关闭**：把凭据库中的 `DEEPSEEK_API_KEY` 移除即可让该路径失效（余额卡片退回"未登录"提示），无需改动插件；
+5. **优先级**：平台账户服务（`deepseekAccount`）优先；只有它不可用/未登录时才会用到密钥路径。
+
+测试覆盖：模块测试断言"响应 JSON 中绝不含密钥"、"只请求固定 URL"、"鉴权失败时不回退旧快照"。
 
 ## 已知限制（v0.1）
 

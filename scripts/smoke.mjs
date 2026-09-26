@@ -11,7 +11,7 @@ import { compareVersions, isNewer, isValidVersion } from '../lib/semver-lite.js'
 import { consumeNonce, isLoopbackRequest, issueNonce } from '../lib/security.js'
 import { moduleMeta } from '../lib/registry.js'
 import { aggregateText, dayKey, decodeFrames, frameStarts, usageRowOf } from '../lib/usage-logs.js'
-import { mapWalletBalances } from '../lib/modules/usage.js'
+import { mapApiKeyBalances, mapWalletBalances } from '../lib/modules/usage.js'
 
 let passed = 0
 function check(name, fn) {
@@ -131,6 +131,26 @@ check('dayKey 按本地时区（23:30 仍是当天）', () => {
 })
 
 console.log('usage balances (account service mapping)')
+check('API Key 余额映射：赠送/充值拆分、标实时与来源', () => {
+  const rows = mapApiKeyBalances({
+    is_available: true,
+    balance_infos: [{ currency: 'CNY', total_balance: '9.99', granted_balance: '1.11', topped_up_balance: '8.88' }],
+  })
+  assert.strictEqual(rows.length, 1)
+  assert.strictEqual(rows[0].totalBalance, '9.99')
+  assert.strictEqual(rows[0].granted, '1.11')
+  assert.strictEqual(rows[0].toppedUp, '8.88')
+  assert.strictEqual(rows[0].source, 'api-key')
+  assert.strictEqual(rows[0].live, true)
+  assert.strictEqual(rows[0].stale, false)
+})
+
+check('API Key 余额映射：异常输入安全返回空', () => {
+  assert.deepStrictEqual(mapApiKeyBalances(null), [])
+  assert.deepStrictEqual(mapApiKeyBalances({ balance_infos: 'nonsense' }), [])
+  assert.deepStrictEqual(mapApiKeyBalances({ is_available: false }), [])
+})
+
 check('钱包映射：充值 + 赠送，均标实时且不过期', () => {
   const rows = mapWalletBalances({
     status: 'ready',
