@@ -1,6 +1,6 @@
 {
   "name": "dsh-harness-toolbox",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "DeepSeek Harness 工具箱（非官方社区插件）：版本检查与一键升级、API 实时用量、环境体检、服务工具，模块化可持续扩展。",
   "type": "module",
   "main": "lib/index.js",

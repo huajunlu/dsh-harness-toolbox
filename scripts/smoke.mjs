@@ -11,6 +11,7 @@ import { compareVersions, isNewer, isValidVersion } from '../lib/semver-lite.js'
 import { consumeNonce, isLoopbackRequest, issueNonce } from '../lib/security.js'
 import { moduleMeta } from '../lib/registry.js'
 import { aggregateText, dayKey, decodeFrames, frameStarts, usageRowOf } from '../lib/usage-logs.js'
+import { mapWalletBalances } from '../lib/modules/usage.js'
 
 let passed = 0
 function check(name, fn) {
@@ -127,6 +128,27 @@ check('缺时间戳/缺用量的行不计入', () => {
 
 check('dayKey 按本地时区（23:30 仍是当天）', () => {
   assert.strictEqual(dayKey(new Date(2026, 8, 26, 23, 30, 0).getTime()), '2026-09-26')
+})
+
+console.log('usage balances (account service mapping)')
+check('钱包映射：充值 + 赠送，均标实时且不过期', () => {
+  const rows = mapWalletBalances({
+    status: 'ready',
+    value: [{ currency: 'CNY', balance: '1.00' }],
+    bonusWallets: [{ currency: 'USD', balance: '2.00' }],
+  })
+  assert.strictEqual(rows.length, 2)
+  assert.strictEqual(rows[0].live, true)
+  assert.strictEqual(rows[0].stale, false)
+  assert.strictEqual(rows[0].bonus, false)
+  assert.strictEqual(rows[1].bonus, true)
+  assert.strictEqual(rows[1].currency, 'USD')
+})
+
+check('非 ready/null 不产出余额（不伪造数字）', () => {
+  assert.deepStrictEqual(mapWalletBalances({ status: 'failed' }), [])
+  assert.deepStrictEqual(mapWalletBalances(null), [])
+  assert.deepStrictEqual(mapWalletBalances({ status: 'ready', value: 'nonsense' }), [])
 })
 
 console.log('usage aggregation (defensive path)')
