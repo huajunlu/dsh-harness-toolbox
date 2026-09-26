@@ -6,14 +6,28 @@
  */
 import assert from 'node:assert'
 import http from 'node:http'
+import zlib from 'node:zlib'
 import { compareVersions, isNewer, isValidVersion } from '../lib/semver-lite.js'
 import { consumeNonce, isLoopbackRequest, issueNonce } from '../lib/security.js'
 import { moduleMeta } from '../lib/registry.js'
+import { aggregateText, dayKey, decodeFrames, frameStarts, usageRowOf } from '../lib/usage-logs.js'
 
 let passed = 0
 function check(name, fn) {
   try {
     fn()
+    passed++
+    console.log(`  ✓ ${name}`)
+  } catch (error) {
+    console.error(`  ✗ ${name}: ${error.message}`)
+    process.exitCode = 1
+  }
+}
+
+/** 异步用例必须走这个包装——否则断言在"✓"之后才失败，会被漏掉。 */
+async function checkAsync(name, fn) {
+  try {
+    await fn()
     passed++
     console.log(`  ✓ ${name}`)
   } catch (error) {
@@ -61,8 +75,62 @@ check('模块清单含 5 项且顺序正确', () => {
   assert.deepStrictEqual(ids, ['updater', 'usage', 'diagnose', 'service', 'about'])
 })
 
+console.log('usage logs (session-log source)')
+check('zstd 多帧：两帧拼接都能解出', () => {
+  const buf = Buffer.concat([
+    zlib.zstdCompressSync(Buffer.from('{"a":1}\n')),
+    zlib.zstdCompressSync(Buffer.from('{"b":2}\n')),
+  ])
+  assert.strictEqual(frameStarts(buf).length, 2)
+  const { text, failed } = decodeFrames(buf)
+  assert.strictEqual(failed, 0)
+  assert.ok(text.includes('{"a":1}') && text.includes('{"b":2}'), '两帧内容都应解出')
+})
+
+check('半截帧（追加写竞态）被跳过而非抛错', () => {
+  const good = zlib.zstdCompressSync(Buffer.from('{"complete":true}\n'))
+  const torn = Buffer.concat([Buffer.from([0x28, 0xb5, 0x2f, 0xfd]), Buffer.from([0x01, 0x02, 0x03, 0x04])])
+  const { text, failed } = decodeFrames(Buffer.concat([good, torn]))
+  assert.ok(text.includes('"complete":true'), '完好帧必须解出')
+  assert.strictEqual(failed, 1, '半截帧应计为失败并跳过')
+})
+
+check('用量事件聚合：按 天/供应商/模型 归并', () => {
+  const at = new Date(2026, 8, 26, 10, 0, 0).getTime()
+  const ev = (usage, provider, model) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: { usage, message: { source: { provider, model } } },
+  })
+  const text = [
+    ev({ inputTokens: 100, outputTokens: 20 }, 'p1', 'm1'),
+    ev({ inputTokens: 50, outputTokens: 10 }, 'p1', 'm1'),
+    ev({ totalTokens: 300, outputTokens: 100 }, 'p2', 'm2'),
+    JSON.stringify({ type: 'tool/call', time: at, data: {} }),
+  ].join('\n')
+  const { rows, events, usageEvents } = aggregateText(text)
+  assert.strictEqual(events, 4)
+  assert.strictEqual(usageEvents, 3)
+  const m1 = rows.find((r) => r.model === 'm1')
+  assert.strictEqual(m1.day, '2026-09-26')
+  assert.strictEqual(m1.calls, 2)
+  assert.strictEqual(m1.input, 150)
+  assert.strictEqual(m1.output, 30)
+  // 只有 totalTokens 时用 total - output 还原输入侧
+  assert.strictEqual(rows.find((r) => r.model === 'm2').input, 200)
+})
+
+check('缺时间戳/缺用量的行不计入', () => {
+  assert.strictEqual(usageRowOf({ data: { usage: { inputTokens: 1 } } }), null)
+  assert.strictEqual(usageRowOf({ time: 1, data: {} }), null)
+})
+
+check('dayKey 按本地时区（23:30 仍是当天）', () => {
+  assert.strictEqual(dayKey(new Date(2026, 8, 26, 23, 30, 0).getTime()), '2026-09-26')
+})
+
 console.log('usage aggregation (defensive path)')
-check('台账缺失时 available:false 不抛错', async () => {
+await checkAsync('用量路由：数据源不可读时 available 布尔且不抛错', async () => {
   const { registerUsage } = await import('../lib/modules/usage.js')
   const registered = []
   const ctx = {
@@ -78,15 +146,17 @@ check('台账缺失时 available:false 不抛错', async () => {
     writeHead(code) { this.code = code },
     end(payload) { this.body = payload },
   }
-  // 本机没有 $DSH_HOME/dsh-usage 时走防御路径；有则 available 为 true。
   await registered[0].handler(request, response)
   const parsed = JSON.parse(response.body)
   assert.strictEqual(parsed.ok, true)
-  assert.ok(typeof parsed.available === 'boolean')
+  assert.strictEqual(typeof parsed.available, 'boolean')
+  // 本机若存在会话日志，则应走实时源并带回扫描统计。
+  if (parsed.available) {
+    assert.ok(parsed.today && typeof parsed.today.calls === 'number')
+    assert.strictEqual(Array.isArray(parsed.trend), true)
+    assert.ok(parsed.source === 'session-logs' || parsed.source === 'legacy-ledger')
+  }
   dispose()
 })
 
-// async check 包装：上面最后一个用例是 async，等一拍再总结。
-setTimeout(() => {
-  console.log(process.exitCode ? '\n存在失败项' : `\n${passed} 项通过`)
-}, 50)
+console.log(process.exitCode ? '\n存在失败项' : `\n${passed} 项通过`)
